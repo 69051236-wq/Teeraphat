@@ -1,0 +1,1136 @@
+<!DOCTYPE html>
+<html lang="th" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ThuengMue (ถึงมือ) - ระบบประสานงานช่วยเหลือฉุกเฉิน กทม.</title>
+  
+  <!-- Tailwind CSS & Google Fonts (Sarabun & Inter) -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- React & ReactDOM & Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Sarabun', 'Inter', 'sans-serif'],
+          },
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              100: '#dcfce7',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+              900: '#14532d',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Sarabun', 'Inter', sans-serif; }
+    .leaflet-container { width: 100%; height: 100%; border-radius: 0.75rem; z-index: 10; }
+    /* Custom pulse animation for nearby alert */
+    @keyframes ringPulse {
+      0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7); }
+      70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(245, 158, 11, 0); }
+      100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(245, 158, 11, 0); }
+    }
+    .pulse-alert { animation: ringPulse 2s infinite; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 h-full overflow-x-hidden">
+  <div id="root" class="h-full"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // ชุดคำแปลภาษาไทย - อังกฤษ
+    const t = {
+      th: {
+        title: "ถึงมือ (ThuengMue)",
+        subtitle: "ระบบประสานงานส่งถุงยังชีพถึงหน้าประตูบ้าน • พื้นที่กรุงเทพมหานคร",
+        residentTab: "สำหรับประชาชน (ขอรับความช่วยเหลือ)",
+        volunteerTab: "ศูนย์บัญชาการอาสาสมัคร",
+        residentTitle: "ลงทะเบียนขอรับความช่วยเหลือ",
+        residentDesc: "ระบุพิกัดบ้านของท่านบนแผนที่กรุงเทพฯ เพื่อให้ทีมอาสาสมัครนำสิ่งของส่งถึงมือ",
+        name: "ชื่อ - นามสกุล ผู้ติดต่อ",
+        phone: "เบอร์โทรศัพท์ติดต่อ",
+        addressName: "ชื่อหมู่บ้าน / ซอย / อาคาร / หอพัก",
+        roomFloor: "บ้านเลขที่ / ชั้น / ห้อง",
+        elderly: "มีผู้สูงอายุอาศัยอยู่ (60 ปีขึ้นไป)",
+        bedridden: "มีผู้ป่วยติดเตียง / ผู้พิการ",
+        selectLocation: "คลิกบนแผนที่เพื่อปักหมุดบ้าน หรือกดปุ่มด้านล่าง",
+        useGps: "ใช้ตำแหน่ง GPS ปัจจุบันของฉัน",
+        submitRegistration: "ยืนยันข้อมูลและปักหมุดขอความช่วยเหลือ",
+        statusTracking: "สถานะการส่งถุงยังชีพของคุณ",
+        statusWaiting: "กำลังรอทีมอาสาสมัครรับเรื่อง",
+        statusNearby: "🚨 อาสาสมัครอยู่ใกล้บ้านคุณแล้ว (ไม่เกิน 500 ม.)",
+        statusDelivered: "✅ จัดส่งถุงยังชีพถึงมือเรียบร้อยแล้ว",
+        volunteerDashboard: "ศูนย์บัญชาการอาสาสมัคร (กทม.)",
+        authPrompt: "พื้นที่จำกัดเฉพาะเจ้าหน้าที่และอาสาสมัคร กรุณากรอกรหัส PIN",
+        pinPlaceholder: "ใส่รหัส PIN (ค่าเริ่มต้น: 1234)",
+        login: "เข้าสู่ระบบเจ้าหน้าที่",
+        logout: "ล็อกหน้าจอเจ้าหน้าที่",
+        totalHouseholds: "ครัวเรือนทั้งหมด",
+        waitingQueue: "รอจัดส่ง",
+        volunteersNearbyCount: "กำลังเข้าใกล้ (<500ม.)",
+        completedDeliveries: "ส่งสำเร็จแล้ว",
+        startSim: "▶ จำลองรถอาสาสมัครวิ่งใน กทม.",
+        stopSim: "⏹ หยุดจำลองการวิ่ง",
+        resetData: "รีเซ็ตข้อมูลตัวอย่าง",
+        queueTitle: "คิวจัดส่งถุงยังชีพ (เรียงตามความเร่งด่วน)",
+        markDone: "ยืนยันส่งถึงมือแล้ว",
+        distance: "ระยะห่างจากทีมใกล้สุด",
+        highPriority: "เร่งด่วนพิเศษ",
+        normalPriority: "ทั่วไป",
+        searchPlaceholder: "ค้นหาชื่อ ซอย หรือสถานที่ใน กทม...",
+        langToggle: "EN",
+        successRegistered: "บันทึกข้อมูลสำเร็จ! ระบบส่งพิกัดไปยังศูนย์อาสาสมัครแล้ว",
+        alertNearby: "แจ้งเตือนจากระบบถึงมือ ทีมอาสาสมัครอยู่ห่างจากบ้านคุณไม่เกิน 500 เมตรแล้วค่ะ เตรียมรับของได้เลยค่ะ",
+        mapStreet: "แผนที่ถนน",
+        mapSat: "ดาวเทียม"
+      },
+      en: {
+        title: "ThuengMue (ถึงมือ)",
+        subtitle: "Door-to-Door Emergency Relief Coordination • Bangkok",
+        residentTab: "Resident Portal (Request Relief)",
+        volunteerTab: "Volunteer Command Center",
+        residentTitle: "Register for Relief Supplies",
+        residentDesc: "Pin your home on the Bangkok map so volunteers can deliver supplies directly to your door.",
+        name: "Contact Name",
+        phone: "Phone Number",
+        addressName: "Village / Soi / Building / Dorm",
+        roomFloor: "House No. / Floor / Room",
+        elderly: "Elderly resident present (60+ years)",
+        bedridden: "Bedridden patient / Disabled",
+        selectLocation: "Click on the map to pin your home or use GPS below",
+        useGps: "Use My Current GPS Location",
+        submitRegistration: "Submit Relief Request",
+        statusTracking: "Your Delivery Status",
+        statusWaiting: "Waiting for Volunteer Dispatch",
+        statusNearby: "🚨 Volunteer Team Nearby (Within 500m)",
+        statusDelivered: "✅ Supplies Delivered Successfully",
+        volunteerDashboard: "Volunteer Command Center (BKK)",
+        authPrompt: "Restricted Area: Authorized Staff & Volunteers Only",
+        pinPlaceholder: "Enter Staff PIN (Default: 1234)",
+        login: "Unlock Command Center",
+        logout: "Lock Staff View",
+        totalHouseholds: "Total Households",
+        waitingQueue: "Waiting",
+        volunteersNearbyCount: "Nearby (<500m)",
+        completedDeliveries: "Delivered",
+        startSim: "▶ Simulate Volunteer Movement",
+        stopSim: "⏹ Stop Simulation",
+        resetData: "Reset Demo Data",
+        queueTitle: "Delivery Queue (Sorted by Vulnerability)",
+        markDone: "Mark Delivered",
+        distance: "Nearest Team",
+        highPriority: "High Priority",
+        normalPriority: "Standard",
+        searchPlaceholder: "Search name, soi, or building in BKK...",
+        langToggle: "TH",
+        successRegistered: "Registration successful! Your pin is now visible to volunteers.",
+        alertNearby: "ThuengMue Alert: A volunteer team is within 500 meters of your location.",
+        mapStreet: "Street Map",
+        mapSat: "Satellite"
+      }
+    };
+
+    // ข้อมูลตัวอย่างในพื้นที่กรุงเทพมหานคร (คลองเตย / พระราม 4 / อนุสาวรีย์ฯ / ลาดพร้าว)
+    const initialHouseholds = [
+      {
+        id: "h1",
+        name: "คุณยายสมศรี ใจดี",
+        phone: "081-234-5678",
+        addressName: "ชุมชนคลองเตย ล็อค 4-5-6 ถ.อาจณรงค์",
+        roomFloor: "บ้านเลขที่ 88/12 (ชั้น 1)",
+        lat: 13.7135,
+        lng: 100.5685,
+        elderly: true,
+        bedridden: true,
+        status: "waiting"
+      },
+      {
+        id: "h2",
+        name: "คุณตาสมชาย รักสงบ",
+        phone: "089-876-5432",
+        addressName: "หอพักสุขสันต์ ซอยรางน้ำ เขตราชเทวี",
+        roomFloor: "ห้อง 204, ชั้น 2",
+        lat: 13.7605,
+        lng: 100.5395,
+        elderly: true,
+        bedridden: false,
+        status: "waiting"
+      },
+      {
+        id: "h3",
+        name: "คุณมานี มีสุข",
+        phone: "086-555-1234",
+        addressName: "ซอยลาดพร้าว 101 แยก 38 เขตบางกะปิ",
+        roomFloor: "บ้านเลขที่ 19/4",
+        lat: 13.7885,
+        lng: 100.6295,
+        elderly: false,
+        bedridden: false,
+        status: "waiting"
+      },
+      {
+        id: "h4",
+        name: "คุณป้าวิไล พรหมมา",
+        phone: "082-444-9876",
+        addressName: "แฟลตดินแดง อาคาร 5 ถ.ประชาสงเคราะห์",
+        roomFloor: "ชั้น 4 ห้อง 411",
+        lat: 13.7670,
+        lng: 100.5535,
+        elderly: true,
+        bedridden: true,
+        status: "waiting"
+      }
+    ];
+
+    // ตำแหน่งเริ่มต้นทีมอาสาสมัครในกรุงเทพฯ
+    const initialVolunteers = [
+      { id: "v1", name: "หน่วยอาสา 01 (โซนคลองเตย-พระราม 4)", lat: 13.7180, lng: 100.5640 },
+      { id: "v2", name: "หน่วยอาสา 02 (โซนดินแดง-ราชเทวี)", lat: 13.7630, lng: 100.5460 },
+      { id: "v3", name: "หน่วยอาสา 03 (โซนลาดพร้าว-บางกะปิ)", lat: 13.7830, lng: 100.6240 }
+    ];
+
+    // คอมโพเนนต์แผนที่ Google Maps จริง (ผ่าน Leaflet)
+    function BangkokGoogleMap({ 
+      households, 
+      volunteers, 
+      mode, // 'resident' | 'volunteer'
+      selectedLat, 
+      selectedLng, 
+      onLocationSelect,
+      focusCoords,
+      lang
+    }) {
+      const mapContainerRef = useRef(null);
+      const mapInstanceRef = useRef(null);
+      const markersLayerRef = useRef(null);
+      const streetLayerRef = useRef(null);
+      const satLayerRef = useRef(null);
+      const [mapType, setMapType] = useState('street'); // 'street' | 'satellite'
+
+      // สร้างแผนที่ครั้งแรก
+      useEffect(() => {
+        if (!mapContainerRef.current || mapInstanceRef.current) return;
+
+        // ศูนย์กลางกรุงเทพมหานคร
+        const bkkCenter = [13.7563, 100.5018];
+        const map = L.map(mapContainerRef.current, {
+          center: bkkCenter,
+          zoom: 12,
+          zoomControl: true
+        });
+
+        // Google Maps Street Layer (ภาษาไทย)
+        const googleStreets = L.tileLayer('https://mt1.google.com/vt/lyrs=m&hl=th&x={x}&y={y}&z={z}', {
+          maxZoom: 20,
+          attribution: '© Google Maps'
+        });
+
+        // Google Maps Hybrid Satellite Layer (ภาพดาวเทียมพร้อมชื่อถนน)
+        const googleHybrid = L.tileLayer('https://mt1.google.com/vt/lyrs=y&hl=th&x={x}&y={y}&z={z}', {
+          maxZoom: 20,
+          attribution: '© Google Maps'
+        });
+
+        googleStreets.addTo(map);
+        streetLayerRef.current = googleStreets;
+        satLayerRef.current = googleHybrid;
+
+        const layerGroup = L.layerGroup().addTo(map);
+        markersLayerRef.current = layerGroup;
+        mapInstanceRef.current = map;
+
+        // คลิกบนแผนที่เพื่อเลือกพิกัด (สำหรับโหมดประชาชน)
+        map.on('click', (e) => {
+          if (onLocationSelect) {
+            onLocationSelect(e.latlng.lat, e.latlng.lng);
+          }
+        });
+
+        return () => {
+          map.remove();
+          mapInstanceRef.current = null;
+        };
+      }, []);
+
+      // สลับโหมดแผนที่ ถนน / ดาวเทียม
+      useEffect(() => {
+        const map = mapInstanceRef.current;
+        if (!map || !streetLayerRef.current || !satLayerRef.current) return;
+
+        if (mapType === 'street') {
+          map.removeLayer(satLayerRef.current);
+          streetLayerRef.current.addTo(map);
+        } else {
+          map.removeLayer(streetLayerRef.current);
+          satLayerRef.current.addTo(map);
+        }
+      }, [mapType]);
+
+      // เลื่อนกล้องไปยังจุดที่เลือก
+      useEffect(() => {
+        const map = mapInstanceRef.current;
+        if (map && focusCoords) {
+          map.flyTo([focusCoords.lat, focusCoords.lng], 15, { duration: 1 });
+        }
+      }, [focusCoords]);
+
+      // วาดหมุดและรัศมี 500 เมตรลงบนแผนที่
+      useEffect(() => {
+        const layerGroup = markersLayerRef.current;
+        if (!layerGroup) return;
+        layerGroup.clearLayers();
+
+        // ฟังก์ชันสร้างหมุด HTML สวยงาม
+        const createCustomIcon = (color, emoji, label) => {
+          return L.divIcon({
+            className: 'custom-map-pin',
+            html: `
+              <div style="display:flex; flex-direction:column; align-items:center; transform: translate(-50%, -100%);">
+                <div style="background:${color}; color:white; width:34px; height:34px; border-radius:50% 50% 50% 0; transform:rotate(-45deg); display:flex; align-items:center; justify-content:center; border:2.5px solid white; box-shadow:0 3px 8px rgba(0,0,0,0.35);">
+                  <span style="transform:rotate(45deg); font-size:16px;">${emoji}</span>
+                </div>
+                ${label ? `<span style="background:rgba(15,23,42,0.85); color:white; font-size:11px; padding:1px 6px; border-radius:4px; margin-top:3px; white-space:nowrap; font-family:Sarabun,sans-serif;">${label}</span>` : ''}
+              </div>
+            `,
+            iconSize: [0, 0],
+            iconAnchor: [0, 0]
+          });
+        };
+
+        if (mode === 'resident') {
+          // โหมดประชาชน: แสดงเฉพาะหมุดบ้านที่กำลังปักหมุด (รักษาความเป็นส่วนตัวของบ้านอื่น)
+          if (selectedLat && selectedLng) {
+            const pinIcon = createCustomIcon('#16a34a', '🏠', lang === 'th' ? 'จุดส่งของของคุณ' : 'Your Location');
+            L.marker([selectedLat, selectedLng], { icon: pinIcon })
+              .addTo(layerGroup)
+              .bindPopup(`<b>${lang === 'th' ? 'พิกัดที่เลือก' : 'Selected Location'}</b><br/>Lat: ${selectedLat.toFixed(5)}, Lng: ${selectedLng.toFixed(5)}`);
+          }
+        } else {
+          // โหมดอาสาสมัคร: แสดงครัวเรือนทั้งหมด + ทีมอาสา + รัศมี 500 เมตร
+          households.forEach((h) => {
+            let color = '#eab308'; // รอจัดส่ง (เหลือง)
+            let emoji = '📦';
+            if (h.status === 'delivered') {
+              color = '#16a34a'; // ส่งแล้ว (เขียว)
+              emoji = '✅';
+            } else if (h.bedridden) {
+              color = '#dc2626'; // ผู้ป่วยติดเตียง (แดง)
+              emoji = '🛏️';
+            } else if (h.elderly) {
+              color = '#f97316'; // ผู้สูงอายุ (ส้ม)
+              emoji = '👴';
+            }
+
+            const icon = createCustomIcon(color, emoji, h.name.split(' ')[0]);
+            const marker = L.marker([h.lat, h.lng], { icon }).addTo(layerGroup);
+            
+            const statusText = h.status === 'delivered' ? 'จัดส่งสำเร็จ' : h.status === 'nearby' ? 'อาสาสมัครอยู่ใกล้ (<500ม.)' : 'รอจัดส่ง';
+            marker.bindPopup(`
+              <div style="font-family:Sarabun,sans-serif; min-width:180px;">
+                <div style="font-weight:bold; font-size:14px; color:#0f172a;">${h.name}</div>
+                <div style="font-size:12px; color:#475569; margin-top:2px;">📍 ${h.addressName} (${h.roomFloor})</div>
+                <div style="font-size:12px; color:#475569;">📞 ${h.phone}</div>
+                <div style="margin-top:6px; padding-top:4px; border-top:1px solid #e2e8f0; font-size:12px;">
+                  สถานะ: <b>${statusText}</b>
+                </div>
+              </div>
+            `);
+          });
+
+          // แสดงทีมอาสาสมัครและวงกลมรัศมี 500 เมตร
+          volunteers.forEach((v) => {
+            const vIcon = createCustomIcon('#2563eb', '🚐', v.name.split(' ')[0]);
+            L.marker([v.lat, v.lng], { icon: vIcon })
+              .addTo(layerGroup)
+              .bindPopup(`<b>${v.name}</b><br/>รัศมีแจ้งเตือนอัตโนมัติ: 500 เมตร`);
+
+            // วงกลมรัศมี 500 เมตร
+            L.circle([v.lat, v.lng], {
+              radius: 500,
+              color: '#3b82f6',
+              weight: 1.5,
+              fillColor: '#3b82f6',
+              fillOpacity: 0.12
+            }).addTo(layerGroup);
+          });
+        }
+      }, [households, volunteers, mode, selectedLat, selectedLng, lang]);
+
+      return (
+        <div className="relative w-full h-full">
+          {/* ปุ่มสลับมุมมองแผนที่ Google Maps */}
+          <div className="absolute top-3 right-3 z-20 bg-white/95 backdrop-blur shadow-md rounded-lg p-1 flex border border-slate-200 text-xs font-medium">
+            <button
+              type="button"
+              onClick={() => setMapType('street')}
+              className={`px-2.5 py-1 rounded-md transition ${mapType === 'street' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              🗺️ {t[lang].mapStreet}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMapType('satellite')}
+              className={`px-2.5 py-1 rounded-md transition ${mapType === 'satellite' ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+            >
+              🛰️ {t[lang].mapSat}
+            </button>
+          </div>
+
+          <div ref={mapContainerRef} className="w-full h-full" />
+        </div>
+      );
+    }
+
+    function App() {
+      const [lang, setLang] = useState('th');
+      const [activeTab, setActiveTab] = useState('resident'); // 'resident' | 'volunteer'
+      const [isVolunteerAuthenticated, setIsVolunteerAuthenticated] = useState(false);
+      const [pinInput, setPinInput] = useState('');
+      const [pinError, setPinError] = useState(false);
+
+      // ข้อมูลหลักในระบบ
+      const [households, setHouseholds] = useState(() => {
+        const saved = localStorage.getItem('thuengmue_bkk_households');
+        return saved ? JSON.parse(saved) : initialHouseholds;
+      });
+      const [volunteers, setVolunteers] = useState(initialVolunteers);
+      const [simulationActive, setSimulationActive] = useState(false);
+
+      // ฟอร์มลงทะเบียนประชาชน (ค่าเริ่มต้นใจกลางกรุงเทพฯ - อนุสาวรีย์ชัยฯ)
+      const [formName, setFormName] = useState('');
+      const [formPhone, setFormPhone] = useState('');
+      const [formAddress, setFormAddress] = useState('');
+      const [formRoom, setFormRoom] = useState('');
+      const [formElderly, setFormElderly] = useState(false);
+      const [formBedridden, setFormBedridden] = useState(false);
+      const [formLat, setFormLat] = useState(13.7649);
+      const [formLng, setFormLng] = useState(100.5383);
+      const [focusCoords, setFocusCoords] = useState(null);
+
+      const [registeredId, setRegisteredId] = useState(localStorage.getItem('thuengmue_bkk_my_id') || null);
+      const [successMsg, setSuccessMsg] = useState('');
+      const [searchQuery, setSearchQuery] = useState('');
+
+      // บันทึกข้อมูลลง LocalStorage
+      useEffect(() => {
+        localStorage.setItem('thuengmue_bkk_households', JSON.stringify(households));
+      }, [households]);
+
+      useEffect(() => {
+        if (registeredId) {
+          localStorage.setItem('thuengmue_bkk_my_id', registeredId);
+        } else {
+          localStorage.removeItem('thuengmue_bkk_my_id');
+        }
+      }, [registeredId]);
+
+      // ระบบเสียงแจ้งเตือน + เสียงพูดภาษาไทย/อังกฤษ
+      const triggerAlert = (msg) => {
+        try {
+          const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.connect(gain);
+          gain.connect(audioCtx.destination);
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(659.25, audioCtx.currentTime);
+          gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+          osc.start();
+          osc.stop(audioCtx.currentTime + 0.5);
+
+          if ('speechSynthesis' in window) {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(msg);
+            utterance.lang = lang === 'th' ? 'th-TH' : 'en-US';
+            utterance.rate = 0.95;
+            window.speechSynthesis.speak(utterance);
+          }
+        } catch (e) {
+          console.log("Audio alert blocked by browser policy until user interaction");
+        }
+      };
+
+      // คำนวณระยะทางจริงบนพื้นโลก (Haversine Formula - หน่วยเมตร)
+      const calculateDistance = (lat1, lon1, lat2, lon2) => {
+        const R = 6371e3;
+        const φ1 = (lat1 * Math.PI) / 180;
+        const φ2 = (lat2 * Math.PI) / 180;
+        const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+        const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+
+        const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+                  Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+        const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+      };
+
+      // จำลองการเคลื่อนที่ของรถอาสาสมัครเข้าหาบ้านที่รอรับของ
+      useEffect(() => {
+        if (!simulationActive) return;
+
+        const interval = setInterval(() => {
+          setVolunteers((prevVolunteers) =>
+            prevVolunteers.map((v, idx) => {
+              // หาบ้านที่ยังรอรับของเพื่อให้รถอาสาวิ่งเข้าไปหาอย่างสมจริง
+              const waitingTargets = households.filter(h => h.status !== 'delivered');
+              if (waitingTargets.length === 0) return v;
+
+              const target = waitingTargets[idx % waitingTargets.length];
+              const dLat = target.lat - v.lat;
+              const dLng = target.lng - v.lng;
+              const dist = Math.sqrt(dLat * dLat + dLng * dLng);
+
+              if (dist < 0.0005) return v; // ถึงจุดหมายแล้ว
+
+              // ขยับเข้าหาเป้าหมายทีละนิด
+              const step = 0.0012;
+              return {
+                ...v,
+                lat: v.lat + (dLat / dist) * step,
+                lng: v.lng + (dLng / dist) * step
+              };
+            })
+          );
+        }, 1500);
+
+        return () => clearInterval(interval);
+      }, [simulationActive, households]);
+
+      // ตรวจสอบระยะห่าง 500 เมตรแบบเรียลไทม์
+      useEffect(() => {
+        setHouseholds((prevHouseholds) =>
+          prevHouseholds.map((h) => {
+            if (h.status === 'delivered') return h;
+
+            const isWithin500m = volunteers.some(
+              (v) => calculateDistance(h.lat, h.lng, v.lat, v.lng) <= 500
+            );
+
+            if (isWithin500m && h.status !== 'nearby') {
+              if (h.id === registeredId) {
+                triggerAlert(t[lang].alertNearby);
+              }
+              return { ...h, status: 'nearby' };
+            }
+            return h;
+          })
+        );
+      }, [volunteers]);
+
+      // ดึงตำแหน่ง GPS ปัจจุบันของผู้ใช้
+      const handleGetCurrentLocation = () => {
+        if (!navigator.geolocation) {
+          alert(lang === 'th' ? 'เบราว์เซอร์ของคุณไม่รองรับ GPS' : 'Geolocation is not supported');
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const { latitude, longitude } = pos.coords;
+            setFormLat(latitude);
+            setFormLng(longitude);
+            setFocusCoords({ lat: latitude, lng: longitude });
+          },
+          () => {
+            alert(lang === 'th' ? 'ไม่สามารถเข้าถึงตำแหน่งได้ กรุณาคลิกเลือกบนแผนที่กรุงเทพฯ แทน' : 'Unable to access GPS. Please click directly on the map.');
+          }
+        );
+      };
+
+      // บันทึกการลงทะเบียนของประชาชน
+      const handleRegister = (e) => {
+        e.preventDefault();
+        if (!formName.trim() || !formPhone.trim() || !formAddress.trim()) return;
+
+        const newHousehold = {
+          id: 'h_' + Date.now(),
+          name: formName.trim(),
+          phone: formPhone.trim(),
+          addressName: formAddress.trim(),
+          roomFloor: formRoom.trim() || '-',
+          lat: formLat,
+          lng: formLng,
+          elderly: formElderly,
+          bedridden: formBedridden,
+          status: 'waiting'
+        };
+
+        setHouseholds([newHousehold, ...households]);
+        setRegisteredId(newHousehold.id);
+        setSuccessMsg(t[lang].successRegistered);
+        setTimeout(() => setSuccessMsg(''), 5000);
+      };
+
+      // ปิดงานส่งสำเร็จ
+      const markDelivered = (id) => {
+        setHouseholds(households.map(h => h.id === id ? { ...h, status: 'delivered' } : h));
+      };
+
+      // รีเซ็ตข้อมูลตัวอย่าง
+      const resetDemo = () => {
+        setHouseholds(initialHouseholds);
+        setVolunteers(initialVolunteers);
+        setRegisteredId(null);
+        setSimulationActive(false);
+        localStorage.removeItem('thuengmue_bkk_households');
+        localStorage.removeItem('thuengmue_bkk_my_id');
+      };
+
+      const myHousehold = households.find(h => h.id === registeredId);
+
+      // คำนวณระยะทางจากทีมอาสาที่ใกล้ที่สุดสำหรับแต่ละบ้าน
+      const getNearestVolunteerDist = (h) => {
+        let minDist = Infinity;
+        volunteers.forEach(v => {
+          const d = calculateDistance(h.lat, h.lng, v.lat, v.lng);
+          if (d < minDist) minDist = d;
+        });
+        return Math.round(minDist);
+      };
+
+      // เรียงลำดับคิวจัดส่ง (ผู้ป่วยติดเตียง > ผู้สูงอายุ > ทั่วไป)
+      const sortedQueue = households
+        .filter(h => 
+          h.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          h.addressName.toLowerCase().includes(searchQuery.toLowerCase())
+        )
+        .sort((a, b) => {
+          if (a.status === 'delivered' && b.status !== 'delivered') return 1;
+          if (a.status !== 'delivered' && b.status === 'delivered') return -1;
+          const scoreA = (a.bedridden ? 2 : 0) + (a.elderly ? 1 : 0);
+          const scoreB = (b.bedridden ? 2 : 0) + (b.elderly ? 1 : 0);
+          return scoreB - scoreA;
+        });
+
+      return (
+        <div className="min-h-full flex flex-col">
+          {/* แถบด้านบน (Header) */}
+          <header className="bg-slate-900 text-white shadow-md sticky top-0 z-50">
+            <div className="max-w-7xl mx-auto px-4 py-3 flex flex-wrap justify-between items-center gap-3">
+              <div className="flex items-center space-x-3">
+                <div className="bg-brand-600 p-2 rounded-xl text-white font-bold text-lg shadow-sm">
+                  🤝
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-lg sm:text-xl font-bold tracking-tight">{t[lang].title}</h1>
+                    <span className="bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] px-2 py-0.5 rounded-full font-medium">
+                      Bangkok Live Map
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400">{t[lang].subtitle}</p>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                <button 
+                  onClick={() => setLang(lang === 'th' ? 'en' : 'th')}
+                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg border border-slate-700 transition"
+                >
+                  🌐 {t[lang].langToggle}
+                </button>
+                <button 
+                  onClick={resetDemo}
+                  className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 text-xs font-medium rounded-lg border border-rose-500/30 transition"
+                >
+                  ↻ {t[lang].resetData}
+                </button>
+              </div>
+            </div>
+
+            {/* แถบเลือกโหมดการใช้งาน (แยกส่วนชัดเจน) */}
+            <div className="bg-slate-950 px-4 border-t border-slate-800">
+              <div className="max-w-7xl mx-auto flex space-x-2 sm:space-x-4">
+                <button
+                  onClick={() => setActiveTab('resident')}
+                  className={`py-3 px-4 font-semibold text-xs sm:text-sm border-b-2 transition flex items-center gap-2 ${
+                    activeTab === 'resident'
+                      ? 'border-brand-500 text-brand-400'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <span>🏠</span>
+                  {t[lang].residentTab}
+                </button>
+
+                <button
+                  onClick={() => setActiveTab('volunteer')}
+                  className={`py-3 px-4 font-semibold text-xs sm:text-sm border-b-2 transition flex items-center gap-2 ${
+                    activeTab === 'volunteer'
+                      ? 'border-amber-400 text-amber-300'
+                      : 'border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <span>🛡️</span>
+                  {t[lang].volunteerTab}
+                  {!isVolunteerAuthenticated && (
+                    <span className="bg-amber-500/20 text-amber-300 text-[10px] px-1.5 py-0.5 rounded border border-amber-500/40">
+                      🔒 PIN
+                    </span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </header>
+
+          {/* พื้นที่เนื้อหาหลัก */}
+          <main className="flex-1 max-w-7xl w-full mx-auto p-4 md:p-6">
+            
+            {successMsg && (
+              <div className="mb-5 bg-emerald-50 border border-emerald-300 text-emerald-900 px-4 py-3 rounded-xl shadow-sm flex items-center gap-3">
+                <span className="text-lg">✅</span>
+                <span className="text-sm font-semibold">{successMsg}</span>
+              </div>
+            )}
+
+            {/* ================= โหมดประชาชน (RESIDENT PORTAL) ================= */}
+            {activeTab === 'resident' && (
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                
+                {/* คอลัมน์ซ้าย: ฟอร์มลงทะเบียน หรือ สถานะของตัวเอง */}
+                <div className="lg:col-span-5 space-y-5">
+                  {myHousehold ? (
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-5">
+                      <div className="flex justify-between items-start border-b border-slate-100 pb-4">
+                        <div>
+                          <span className="text-[11px] font-bold uppercase tracking-wider text-brand-600">
+                            {lang === 'th' ? 'ข้อมูลการลงทะเบียนของคุณ' : 'Your Registered Household'}
+                          </span>
+                          <h3 className="text-xl font-bold text-slate-900 mt-0.5">{myHousehold.name}</h3>
+                        </div>
+                        <button 
+                          onClick={() => setRegisteredId(null)} 
+                          className="text-xs bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg font-medium transition"
+                        >
+                          {lang === 'th' ? 'แก้ไข / ลงทะเบียนใหม่' : 'Edit / New'}
+                        </button>
+                      </div>
+
+                      <div className="bg-slate-50 p-4 rounded-xl space-y-2.5 text-sm border border-slate-100">
+                        <div className="flex justify-between gap-2">
+                          <span className="text-slate-500">{lang === 'th' ? 'สถานที่:' : 'Location:'}</span>
+                          <span className="font-semibold text-slate-800 text-right">{myHousehold.addressName} ({myHousehold.roomFloor})</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">{lang === 'th' ? 'เบอร์ติดต่อ:' : 'Phone:'}</span>
+                          <span className="font-semibold text-slate-800">{myHousehold.phone}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-500">{lang === 'th' ? 'กลุ่มเปราะบาง:' : 'Priority Group:'}</span>
+                          <span className="font-semibold text-rose-600">
+                            {[
+                              myHousehold.bedridden && (lang === 'th' ? 'ผู้ป่วยติดเตียง' : 'Bedridden'),
+                              myHousehold.elderly && (lang === 'th' ? 'ผู้สูงอายุ' : 'Elderly')
+                            ].filter(Boolean).join(' + ') || (lang === 'th' ? 'ครัวเรือนทั่วไป' : 'Standard')}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* กล่องแสดงสถานะการจัดส่ง */}
+                      <div className={`p-5 rounded-2xl border-2 ${
+                        myHousehold.status === 'delivered' 
+                          ? 'bg-emerald-50 border-emerald-400 text-emerald-950'
+                          : myHousehold.status === 'nearby'
+                          ? 'bg-amber-50 border-amber-400 text-amber-950 pulse-alert'
+                          : 'bg-blue-50 border-blue-300 text-blue-950'
+                      }`}>
+                        <div className="text-xs font-bold uppercase tracking-wider opacity-75 mb-1">
+                          {t[lang].statusTracking}
+                        </div>
+                        <div className="text-base font-bold">
+                          {myHousehold.status === 'delivered' ? t[lang].statusDelivered :
+                           myHousehold.status === 'nearby' ? t[lang].statusNearby : t[lang].statusWaiting}
+                        </div>
+                        {myHousehold.status === 'nearby' && (
+                          <p className="text-xs mt-2 text-amber-800">
+                            {lang === 'th' 
+                              ? 'กรุณาเปิดเสียงโทรศัพท์และเตรียมพร้อมรับถุงยังชีพที่หน้าบ้าน/หน้าอาคาร' 
+                              : 'Please keep your phone nearby and prepare to receive supplies at your door.'}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                      <h2 className="text-lg font-bold text-slate-900">{t[lang].residentTitle}</h2>
+                      <p className="text-xs text-slate-500 mt-1 mb-5">{t[lang].residentDesc}</p>
+
+                      <form onSubmit={handleRegister} className="space-y-4">
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">{t[lang].name} *</label>
+                          <input 
+                            type="text" 
+                            required
+                            value={formName}
+                            onChange={(e) => setFormName(e.target.value)}
+                            placeholder="เช่น สมชาย ใจดี"
+                            className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-slate-700 mb-1">{t[lang].phone} *</label>
+                          <input 
+                            type="tel" 
+                            required
+                            value={formPhone}
+                            onChange={(e) => setFormPhone(e.target.value)}
+                            placeholder="08X-XXX-XXXX"
+                            className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">{t[lang].addressName} *</label>
+                            <input 
+                              type="text" 
+                              required
+                              value={formAddress}
+                              onChange={(e) => setFormAddress(e.target.value)}
+                              placeholder="ซอย / หมู่บ้าน / หอพัก"
+                              className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-bold text-slate-700 mb-1">{t[lang].roomFloor}</label>
+                            <input 
+                              type="text" 
+                              value={formRoom}
+                              onChange={(e) => setFormRoom(e.target.value)}
+                              placeholder="บ้านเลขที่ / ชั้น / ห้อง"
+                              className="w-full px-3.5 py-2 text-sm rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="space-y-2.5 pt-2 border-t border-slate-100">
+                          <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
+                            <input 
+                              type="checkbox" 
+                              checked={formElderly}
+                              onChange={(e) => setFormElderly(e.target.checked)}
+                              className="w-4 h-4 text-orange-500 rounded border-slate-300 focus:ring-orange-500"
+                            />
+                            <span className="text-sm font-medium text-slate-700">👴 {t[lang].elderly}</span>
+                          </label>
+
+                          <label className="flex items-center space-x-3 cursor-pointer p-2 rounded-lg hover:bg-slate-50">
+                            <input 
+                              type="checkbox" 
+                              checked={formBedridden}
+                              onChange={(e) => setFormBedridden(e.target.checked)}
+                              className="w-4 h-4 text-rose-600 rounded border-slate-300 focus:ring-rose-500"
+                            />
+                            <span className="text-sm font-medium text-slate-700">🛏️ {t[lang].bedridden}</span>
+                          </label>
+                        </div>
+
+                        {/* ส่วนปักหมุดพิกัด */}
+                        <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2">
+                          <div className="flex justify-between items-center text-xs">
+                            <span className="font-semibold text-slate-700">📍 {t[lang].selectLocation}</span>
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] font-mono text-slate-500">
+                              {formLat.toFixed(5)}, {formLng.toFixed(5)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={handleGetCurrentLocation}
+                              className="text-xs bg-white hover:bg-slate-100 text-slate-800 border border-slate-300 px-2.5 py-1 rounded-lg font-medium shadow-xs transition"
+                            >
+                              🎯 {t[lang].useGps}
+                            </button>
+                          </div>
+                        </div>
+
+                        <button 
+                          type="submit"
+                          className="w-full py-3 bg-brand-600 hover:bg-brand-700 text-white font-bold text-sm rounded-xl shadow-sm transition"
+                        >
+                          {t[lang].submitRegistration}
+                        </button>
+                      </form>
+                    </div>
+                  )}
+                </div>
+
+                {/* คอลัมน์ขวา: แผนที่กรุงเทพฯ แบบ Google Maps */}
+                <div className="lg:col-span-7 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col h-[520px] lg:h-[620px]">
+                  <div className="mb-2.5 flex flex-wrap justify-between items-center gap-2">
+                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      🗺️ {lang === 'th' ? 'แผนที่กรุงเทพมหานคร (คลิกเพื่อเลื่อนหมุดบ้านของคุณ)' : 'Bangkok Map (Click to set your home pin)'}
+                    </span>
+                    <span className="text-[11px] text-slate-400">
+                      {lang === 'th' ? 'ข้อมูลพิกัดของท่านจะแสดงเฉพาะเจ้าหน้าที่อาสาสมัครเท่านั้น' : 'Your pin is private and only visible to volunteers'}
+                    </span>
+                  </div>
+                  <div className="flex-1 w-full rounded-xl overflow-hidden border border-slate-200">
+                    <BangkokGoogleMap 
+                      households={households}
+                      volunteers={volunteers}
+                      mode="resident"
+                      selectedLat={myHousehold ? myHousehold.lat : formLat}
+                      selectedLng={myHousehold ? myHousehold.lng : formLng}
+                      focusCoords={focusCoords}
+                      lang={lang}
+                      onLocationSelect={(lat, lng) => {
+                        if (!myHousehold) {
+                          setFormLat(lat);
+                          setFormLng(lng);
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+
+              </div>
+            )}
+
+            {/* ================= โหมดศูนย์บัญชาการอาสาสมัคร (VOLUNTEER COMMAND CENTER) ================= */}
+            {activeTab === 'volunteer' && (
+              <div>
+                {!isVolunteerAuthenticated ? (
+                  /* หน้าจอล็อกรหัส PIN ป้องกันบุคคลทั่วไปเข้าถึงข้อมูลเจ้าหน้าที่ */
+                  <div className="max-w-md mx-auto bg-white rounded-2xl shadow-md border border-slate-200 p-8 text-center space-y-6 mt-10">
+                    <div className="w-14 h-14 bg-amber-100 text-amber-600 rounded-2xl flex items-center justify-center mx-auto text-2xl shadow-inner">
+                      🔒
+                    </div>
+                    <div>
+                      <h2 className="text-xl font-bold text-slate-900">{t[lang].volunteerDashboard}</h2>
+                      <p className="text-xs text-slate-500 mt-1.5 leading-relaxed">{t[lang].authPrompt}</p>
+                    </div>
+
+                    <form onSubmit={(e) => {
+                      e.preventDefault();
+                      if (pinInput === '1234') {
+                        setIsVolunteerAuthenticated(true);
+                        setPinError(false);
+                        setPinInput('');
+                      } else {
+                        setPinError(true);
+                      }
+                    }} className="space-y-4">
+                      <input 
+                        type="password"
+                        maxLength="6"
+                        value={pinInput}
+                        onChange={(e) => setPinInput(e.target.value)}
+                        placeholder={t[lang].pinPlaceholder}
+                        className="w-full text-center tracking-widest text-lg font-bold px-4 py-3 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                      />
+                      {pinError && (
+                        <p className="text-xs text-rose-600 font-semibold">
+                          {lang === 'th' ? '❌ รหัส PIN ไม่ถูกต้อง (สำหรับทดสอบให้ใส่ 1234)' : '❌ Invalid PIN (Use 1234 for demo)'}
+                        </p>
+                      )}
+                      <button 
+                        type="submit"
+                        className="w-full py-3 bg-slate-900 hover:bg-slate-800 text-white font-bold text-sm rounded-xl shadow-sm transition"
+                      >
+                        {t[lang].login}
+                      </button>
+                    </form>
+                  </div>
+                ) : (
+                  /* หน้าแดชบอร์ดเมื่อเจ้าหน้าที่ยืนยันตัวตนสำเร็จ */
+                  <div className="space-y-6">
+                    
+                    {/* แถบเครื่องมือด้านบนของเจ้าหน้าที่ */}
+                    <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap justify-between items-center gap-4">
+                      <div className="flex items-center gap-3">
+                        <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-2.5 py-1 rounded-lg">
+                          ● STAFF ACTIVE
+                        </span>
+                        <h2 className="text-base sm:text-lg font-bold text-slate-900">{t[lang].volunteerDashboard}</h2>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <button
+                          onClick={() => setSimulationActive(!simulationActive)}
+                          className={`px-4 py-2 rounded-xl text-xs font-bold transition shadow-xs ${
+                            simulationActive 
+                              ? 'bg-amber-500 hover:bg-amber-600 text-white animate-pulse' 
+                              : 'bg-blue-600 hover:bg-blue-700 text-white'
+                          }`}
+                        >
+                          {simulationActive ? t[lang].stopSim : t[lang].startSim}
+                        </button>
+
+                        <button
+                          onClick={() => setIsVolunteerAuthenticated(false)}
+                          className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-xl transition"
+                        >
+                          🔒 {t[lang].logout}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* การ์ดสรุปตัวเลขภาพรวม */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                        <div className="text-xs text-slate-500 font-medium">{t[lang].totalHouseholds}</div>
+                        <div className="text-2xl font-bold text-slate-900 mt-1">{households.length}</div>
+                      </div>
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                        <div className="text-xs text-slate-500 font-medium">{t[lang].waitingQueue}</div>
+                        <div className="text-2xl font-bold text-amber-600 mt-1">
+                          {households.filter(h => h.status === 'waiting').length}
+                        </div>
+                      </div>
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                        <div className="text-xs text-slate-500 font-medium">{t[lang].volunteersNearbyCount}</div>
+                        <div className="text-2xl font-bold text-blue-600 mt-1">
+                          {households.filter(h => h.status === 'nearby').length}
+                        </div>
+                      </div>
+                      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs">
+                        <div className="text-xs text-slate-500 font-medium">{t[lang].completedDeliveries}</div>
+                        <div className="text-2xl font-bold text-emerald-600 mt-1">
+                          {households.filter(h => h.status === 'delivered').length}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* แผนที่รวม + รายการคิวจัดส่ง */}
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                      
+                      {/* แผนที่สั่งการกรุงเทพฯ */}
+                      <div className="lg:col-span-7 bg-white rounded-2xl shadow-sm border border-slate-200 p-4 flex flex-col h-[500px] lg:h-[600px]">
+                        <div className="mb-2.5 flex flex-wrap justify-between items-center gap-2 text-xs">
+                          <span className="font-bold text-slate-800">🗺️ แผนที่ปฏิบัติการอาสาสมัคร (กทม.)</span>
+                          <div className="flex items-center gap-3 text-[11px] text-slate-600">
+                            <span>🛏️ ติดเตียง</span>
+                            <span>👴 สูงอายุ</span>
+                            <span>📦 ทั่วไป</span>
+                            <span>🚐 ทีมอาสา (วงกลม 500ม.)</span>
+                          </div>
+                        </div>
+                        <div className="flex-1 w-full rounded-xl overflow-hidden border border-slate-200">
+                          <BangkokGoogleMap 
+                            households={households}
+                            volunteers={volunteers}
+                            mode="volunteer"
+                            focusCoords={focusCoords}
+                            lang={lang}
+                          />
+                        </div>
+                      </div>
+
+                      {/* คิวจัดส่งสิ่งของ */}
+                      <div className="lg:col-span-5 bg-white rounded-2xl shadow-sm border border-slate-200 p-5 flex flex-col h-[600px]">
+                        <div className="mb-3">
+                          <h3 className="text-base font-bold text-slate-900">{t[lang].queueTitle}</h3>
+                          <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            placeholder={t[lang].searchPlaceholder}
+                            className="mt-2 w-full px-3 py-2 text-xs rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-brand-500"
+                          />
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                          {sortedQueue.map((h) => {
+                            const distMeters = getNearestVolunteerDist(h);
+                            const isUrgent = h.bedridden || h.elderly;
+
+                            return (
+                              <div 
+                                key={h.id}
+                                onClick={() => setFocusCoords({ lat: h.lat, lng: h.lng })}
+                                className={`p-4 rounded-xl border transition cursor-pointer ${
+                                  h.status === 'delivered'
+                                    ? 'bg-slate-50 border-slate-200 opacity-65'
+                                    : h.status === 'nearby'
+                                    ? 'bg-amber-50/70 border-amber-300'
+                                    : isUrgent
+                                    ? 'bg-rose-50/40 border-rose-200 hover:border-rose-400'
+                                    : 'bg-white border-slate-200 hover:border-slate-300'
+                                }`}
+                              >
+                                <div className="flex justify-between items-start gap-2">
+                                  <div>
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span className="font-bold text-sm text-slate-900">{h.name}</span>
+                                      {h.bedridden && (
+                                        <span className="bg-rose-600 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                          🛏️ ผู้ป่วยติดเตียง
+                                        </span>
+                                      )}
+                                      {h.elderly && (
+                                        <span className="bg-orange-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full">
+                                          👴 ผู้สูงอายุ
+                                        </span>
+                                      )}
+                                    </div>
+                                    <p className="text-xs text-slate-600 mt-1">📍 {h.addressName} ({h.roomFloor})</p>
+                                    <p className="text-xs text-slate-500">📞 {h.phone}</p>
+                                  </div>
+
+                                  <div className="text-right flex-shrink-0">
+                                    <span className={`inline-block text-[11px] font-bold px-2 py-0.5 rounded-md ${
+                                      h.status === 'delivered' ? 'bg-emerald-100 text-emerald-800' :
+                                      h.status === 'nearby' ? 'bg-amber-200 text-amber-900' :
+                                      'bg-slate-100 text-slate-700'
+                                    }`}>
+                                      {h.status === 'delivered' ? 'ส่งแล้ว' : h.status === 'nearby' ? 'ใกล้ถึง (<500ม.)' : `${distMeters} ม.`}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {h.status !== 'delivered' && (
+                                  <div className="mt-3 pt-2.5 border-t border-slate-100 flex justify-end">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        markDelivered(h.id);
+                                      }}
+                                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-lg transition"
+                                    >
+                                      ✓ {t[lang].markDone}
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+          </main>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
